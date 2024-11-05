@@ -87,28 +87,28 @@ close VCF;
 
 open SAM, $opt{s};
 while(<SAM>) {
-	next if /^\@/;
+	next if /^\@/; # Skip header lines
 	my @lines = split "\t";
 	my $id = $lines[2];
-    next if $lines[1] >= 256; # skip entries that are secondary alignment or to multiple sites
+	next if $lines[1] >= 256; # skip entries that are secondary alignment or to multiple sites
 	my $st_qpos = $lines[3]; # starting query position
 	#my $mapq = $lines[4]; # mapping quality score
-	#skip if the alignment id is not found in the vcf hash ref
+	# skip if the alignment id is not found in the vcf hash ref
 	next if not defined $vcf->{$id};
 
-  next if $lines[5] eq "*";
+	next if $lines[5] eq "*";
 	my $cigar = Bio::Cigar->new($lines[5]);
 	my @qseq = split "", $lines[9];
 	my @qseq_qual = split "", $lines[10];
 
 	next if $#qseq < 1;
-	#print "Query length is ", $cigar->query_length, "\n";
-	#print "Reference length is ", $cigar->reference_length, "\n";
-	my $hapRead={};
+
+	my $hapRead = {};
 	$hapRead->{"seq"} = "";
-	my $ct=0;
+	my $ct = 0;
+
 	for my $rpos (@{$vcf->{$id}}) {
-		my $rpos_adj = $rpos - $st_qpos +1;
+		my $rpos_adj = $rpos - $st_qpos + 1;
 		$ct++;
 
 		if ($cigar->reference_length < $rpos_adj || $rpos_adj < 1) {
@@ -123,32 +123,24 @@ while(<SAM>) {
 			push @{$hapRead->{"qual"}}, "_";
  		}
 		else {
-			$hapRead->{"seq"} .= $qseq[$qpos-1];
-			push @{$hapRead->{"qual"}}, $qseq_qual[$qpos-1];
+			$hapRead->{"seq"} .= $qseq[$qpos - 1];
+			push @{$hapRead->{"qual"}}, $qseq_qual[$qpos - 1];
 		}
-
-		#print $qpos-1, "\t", $#qseq, "\t", $lines[0], "\t", $id, "\n";
-		#print join "\t", $id, $rpos, $qseq[$qpos-1], $qseq_qual[$qpos-1], "\n" if $qpos != -1;
 	}
 
 	$hap->{$id}->{$hapRead->{"seq"}}->{"ct"}++;
-	for my $i (0..$#{$vcf->{$id}}) {
+	for my $i (0 .. $#{$vcf->{$id}}) {
+		if (!defined ${$hap->{$id}->{$hapRead->{"seq"}}->{"maxC"}}[$i]) {
+			${$hap->{$id}->{$hapRead->{"seq"}}->{"maxC"}}[$i] = 0;
+			${$hap->{$id}->{$hapRead->{"seq"}}->{"sC"}}[$i] = 0;
+		}
 
-	  if(! defined ${$hap->{$id}->{$hapRead->{"seq"}}->{"maxC"}}[$i]) {
-	 	${$hap->{$id}->{$hapRead->{"seq"}}->{"maxC"}}[$i] = 0;
-	 	${$hap->{$id}->{$hapRead->{"seq"}}->{"sC"}}[$i] = 0;
-	 	}
-
-		my $q = 10**(-(ord(${$hapRead->{"qual"}}[$i])-33)/10);
-		#${$hap->{$id}->{$hapRead->{"seq"}}->{"logC"}}[$i]+= log(1-$q) ;
-	 	#${$hap->{$id}->{$hapRead->{"seq"}}->{"logW"}}[$i]+= log($q);
-	 	${$hap->{$id}->{$hapRead->{"seq"}}->{"sC"}}[$i]+= 1-$q; # collecting the sum of prob phred site score for future use
-	 	${$hap->{$id}->{$hapRead->{"seq"}}->{"maxC"}}[$i] = max(1-$q, ${$hap->{$id}->{$hapRead->{"seq"}}->{"maxC"}}[$i]);
-
+		my $q = 10**(-(ord(${$hapRead->{"qual"}}[$i]) - 33) / 10);
+		${$hap->{$id}->{$hapRead->{"seq"}}->{"sC"}}[$i] += 1 - $q;
+		${$hap->{$id}->{$hapRead->{"seq"}}->{"maxC"}}[$i] = max(1 - $q, ${$hap->{$id}->{$hapRead->{"seq"}}->{"maxC"}}[$i]);
 	}
-	#${$hap->{$id}->{$hapRead->{"seq"}}->{"mapq"}->{$mapq}}++; # collecting the MapQ alignment score
-
 }
+
 
 
 #--- output a haplotype summary file -----
