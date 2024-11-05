@@ -73,19 +73,20 @@ while (<SAM>) {
 		if ($cigar->reference_length < $rpos_adj || $rpos_adj < 1) {
 			$hapRead->{"seq"} .= "N";  # unknown base
 			$has_missing_data = 1;
-			next;
+			last;  # Stop processing this sequence if we encounter missing data
 		}
 		my ($qpos, $op) = $cigar->rpos_to_qpos($rpos_adj);
 
 		if (not defined $qpos) {
 			$hapRead->{"seq"} .= "X";  # deletion site
 			$has_missing_data = 1;
+			last;  # Stop processing this sequence if we encounter missing data
 		} else {
 			$hapRead->{"seq"} .= $qseq[$qpos - 1];
 		}
 	}
 
-	# Only proceed if there’s no missing data in hapRead->{"seq"}
+	# Skip sequences with any missing data
 	next if $has_missing_data;
 
 	# Populate hap structure with valid haplotypes (no missing data)
@@ -97,20 +98,4 @@ while (<SAM>) {
 		}
 
 		my $q = 10**(-(ord(${$hapRead->{"qual"}}[$i]) - 33) / 10);
-		${$hap->{$id}->{$hapRead->{"seq"}}->{"sC"}}[$i] += 1 - $q;
-		${$hap->{$id}->{$hapRead->{"seq"}}->{"maxC"}}[$i] = max(1 - $q, ${$hap->{$id}->{$hapRead->{"seq"}}->{"maxC"}}[$i]);
-	}
-}
-
-#--- Output a haplotype summary file ---
-for my $id (keys %{$hap}) {
-	for my $h (keys %{$hap->{$id}}) {
-		print join "\t", $opt{g}, 
-			$opt{i}, 
-			$id, 
-			$h, 
-			$hap->{$id}->{$h}->{"ct"},
-			(join ",", @{$hap->{$id}->{$h}->{"sC"}}),
-			(join ",", @{$hap->{$id}->{$h}->{"maxC"}})."\n";
-	}
-}
+		${$hap
