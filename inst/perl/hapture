@@ -24717,90 +24717,76 @@ close VCF;
 
 open SAM, $opt{s};
 while(<SAM>) {
-	next if /^\@/;
+	next if /^\@/; # Skip header lines
 	my @lines = split "\t";
 	my $id = $lines[2];
-    next if $lines[1] >= 256; # skip entries that are secondary alignment or to multiple sites
+	next if $lines[1] >= 256; # skip entries that are secondary alignment or to multiple sites
 	my $st_qpos = $lines[3]; # starting query position
 	#my $mapq = $lines[4]; # mapping quality score
-	#skip if the alignment id is not found in the vcf hash ref
+	# skip if the alignment id is not found in the vcf hash ref
 	next if not defined $vcf->{$id};
 
-  next if $lines[5] eq "*";
+	next if $lines[5] eq "*";
 	my $cigar = Bio::Cigar->new($lines[5]);
 	my @qseq = split "", $lines[9];
 	my @qseq_qual = split "", $lines[10];
 
 	next if $#qseq < 1;
-	#print "Query length is ", $cigar->query_length, "\n";
-	#print "Reference length is ", $cigar->reference_length, "\n";
-	my $hapRead={};
+
+	my $hapRead = {};
 	$hapRead->{"seq"} = "";
-	my $ct=0;
+	my $ct = 0;
+	my $has_missing_data = 0;  # Flag to track if there's any missing data or deletion across positions
+
 	for my $rpos (@{$vcf->{$id}}) {
-		my $rpos_adj = $rpos - $st_qpos +1;
+		my $rpos_adj = $rpos - $st_qpos + 1;
 		$ct++;
 
+		# Check for out-of-bound positions or missing reference length
 		if ($cigar->reference_length < $rpos_adj || $rpos_adj < 1) {
-			$hapRead->{"seq"} .= "N"; # marked as unknown
-			push @{$hapRead->{"qual"}}, "_";
-			next;
+			$has_missing_data = 1;  # Mark as having missing data
+			last;  # Stop processing if any position is missing data
 		}
 		my ($qpos, $op) = $cigar->rpos_to_qpos($rpos_adj);
 
+		# Check for undefined query position (deletion) and mark missing data
 		if (not defined $qpos) {
-			$hapRead->{"seq"} .= "X"; # marked as deletion site
-			push @{$hapRead->{"qual"}}, "_";
- 		}
-		else {
-			$hapRead->{"seq"} .= $qseq[$qpos-1];
-			push @{$hapRead->{"qual"}}, $qseq_qual[$qpos-1];
+			$has_missing_data = 1;  # Mark as having missing data
+			last;  # Stop processing if any position is missing data
 		}
 
-		#print $qpos-1, "\t", $#qseq, "\t", $lines[0], "\t", $id, "\n";
-		#print join "\t", $id, $rpos, $qseq[$qpos-1], $qseq_qual[$qpos-1], "\n" if $qpos != -1;
+		# Append the base if it's available in the sequence
+		$hapRead->{"seq"} .= $qseq[$qpos - 1];
+		push @{$hapRead->{"qual"}}, $qseq_qual[$qpos - 1];
 	}
 
+	# Skip sequences with any missing or deleted data
+	next if $has_missing_data;
+
+	# Populate hap structure with valid haplotypes (fully called SNPs)
 	$hap->{$id}->{$hapRead->{"seq"}}->{"ct"}++;
-	for my $i (0..$#{$vcf->{$id}}) {
+	for my $i (0 .. $#{$vcf->{$id}}) {
+		if (!defined ${$hap->{$id}->{$hapRead->{"seq"}}->{"maxC"}}[$i]) {
+			${$hap->{$id}->{$hapRead->{"seq"}}->{"maxC"}}[$i] = 0;
+			${$hap->{$id}->{$hapRead->{"seq"}}->{"sC"}}[$i] = 0;
+		}
 
-	  if(! defined ${$hap->{$id}->{$hapRead->{"seq"}}->{"maxC"}}[$i]) {
-	 	${$hap->{$id}->{$hapRead->{"seq"}}->{"maxC"}}[$i] = 0;
-	 	${$hap->{$id}->{$hapRead->{"seq"}}->{"sC"}}[$i] = 0;
-	 	}
-
-		my $q = 10**(-(ord(${$hapRead->{"qual"}}[$i])-33)/10);
-		#${$hap->{$id}->{$hapRead->{"seq"}}->{"logC"}}[$i]+= log(1-$q) ;
-	 	#${$hap->{$id}->{$hapRead->{"seq"}}->{"logW"}}[$i]+= log($q);
-	 	${$hap->{$id}->{$hapRead->{"seq"}}->{"sC"}}[$i]+= 1-$q; # collecting the sum of prob phred site score for future use
-	 	${$hap->{$id}->{$hapRead->{"seq"}}->{"maxC"}}[$i] = max(1-$q, ${$hap->{$id}->{$hapRead->{"seq"}}->{"maxC"}}[$i]);
-
+		my $q = 10**(-(ord(${$hapRead->{"qual"}}[$i]) - 33) / 10);
+		${$hap->{$id}->{$hapRead->{"seq"}}->{"sC"}}[$i] += 1 - $q;
+		${$hap->{$id}->{$hapRead->{"seq"}}->{"maxC"}}[$i] = max(1 - $q, ${$hap->{$id}->{$hapRead->{"seq"}}->{"maxC"}}[$i]);
 	}
-	#${$hap->{$id}->{$hapRead->{"seq"}}->{"mapq"}->{$mapq}}++; # collecting the MapQ alignment score
-
 }
 
-
-#--- output a haplotype summary file -----
-
-for my $id (keys %{$hap}){
-	for my $h (keys %{$hap->{$id}}){
-
-		print join "\t", $opt{g}, # group label
-				 $opt{i}, # individual id label
-				$id, #locus id
-				$h, # haplotype sequence
-				$hap->{$id}->{$h}->{"ct"},  # number of occurence observed for this haplotype or read depth
-				#(join ",", @{$hap->{$id}->{$h}->{"logC"}}), # log scale phred stat for being a correct base
-				#(join ",", @{$hap->{$id}->{$h}->{"logW"}}), # log scale phred stat for being a miscalled base
-				#(join ",", @{$vcf->{$id}}); # variant position
-				(join ",", @{$hap->{$id}->{$h}->{"sC"}}), # sum of prob for calling correct base
-				(join ",", @{$hap->{$id}->{$h}->{"maxC"}})."\n";# max phred score
-
-		#print "\t";
-
-    #print join ",", map {$_, ${$hap->{$id}->{$h}->{"mapq"}->{$_}}} (keys %{$hap->{$id}->{$h}->{"mapq"}});
-	  #print "\n";
+#--- Output a haplotype summary file ---
+for my $id (keys %{$hap}) {
+	for my $h (keys %{$hap->{$id}}) {
+		print join "\t", $opt{g}, 
+			$opt{i}, 
+			$id, 
+			$h, 
+			$hap->{$id}->{$h}->{"ct"},
+			(join ",", @{$hap->{$id}->{$h}->{"sC"}}),
+			(join ",", @{$hap->{$id}->{$h}->{"maxC"}})."\n";
 	}
 }
 
